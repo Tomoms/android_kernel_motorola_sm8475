@@ -3406,7 +3406,7 @@ static int get_permissions_callback(void *k, void *d, void *args)
 }
 
 int security_get_permissions(struct selinux_policy *policy,
-			     char *class, char ***perms, u32 *nperms)
+			     const char *class, char ***perms, u32 *nperms)
 {
 	struct policydb *policydb;
 	u32 i;
