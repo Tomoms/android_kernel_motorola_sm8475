@@ -251,6 +251,13 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 
 	newbrk = PAGE_ALIGN(brk);
 	oldbrk = PAGE_ALIGN(mm->brk);
+	/* properly handle unaligned min_brk as an empty heap */
+	if (min_brk & ~PAGE_MASK) {
+		if (brk == min_brk)
+			newbrk -= PAGE_SIZE;
+		if (mm->brk == min_brk)
+			oldbrk -= PAGE_SIZE;
+	}
 	if (oldbrk == newbrk) {
 		mm->brk = brk;
 		goto success;
@@ -3213,8 +3220,12 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 	}
 
 	file = get_file(vma->vm_file);
+	ret = security_mmap_file(vma->vm_file, prot, flags);
+	if (ret)
+		goto out_fput;
 	ret = do_mmap(vma->vm_file, start, size,
 			prot, flags, pgoff, &populate, NULL);
+out_fput:
 	fput(file);
 out:
 	mmap_write_unlock(mm);
