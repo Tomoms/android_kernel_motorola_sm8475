@@ -57,28 +57,15 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_blocked);
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 EXPORT_SYMBOL_GPL(runqueues);
 
-#ifdef CONFIG_SCHED_DEBUG
-/*
- * Debugging: various feature bits
- *
- * If SCHED_DEBUG is disabled, each compilation unit has its own copy of
- * sysctl_sched_features, defined in sched.h, to allow constants propagation
- * at compile time and compiler optimization based on features default.
- */
-#define SCHED_FEAT(name, enabled)	\
-	(1UL << __SCHED_FEAT_##name) * enabled |
-const_debug unsigned int sysctl_sched_features =
-#include "features.h"
-	0;
-EXPORT_SYMBOL_GPL(sysctl_sched_features);
-#undef SCHED_FEAT
-#endif
-
 /*
  * Number of tasks to iterate in a single balance run.
  * Limited because this is done with IRQs disabled.
  */
+#if !defined(CONFIG_ANDROID)
 const_debug unsigned int sysctl_sched_nr_migrate = 32;
+#else
+const_debug unsigned int sysctl_sched_nr_migrate = 8;
+#endif
 
 /*
  * period over which we measure -rt task CPU usage in us.
@@ -2538,7 +2525,7 @@ out:
 		 * leave kernel.
 		 */
 		if (p->mm && printk_ratelimit()) {
-			printk_deferred("process %d (%s) no longer affine to cpu%d\n",
+			pr_debug("process %d (%s) no longer affine to cpu%d\n",
 					task_pid_nr(p), p->comm, cpu);
 		}
 	}
@@ -2761,6 +2748,7 @@ static int ttwu_runnable(struct task_struct *p, int wake_flags)
 }
 
 #ifdef CONFIG_SMP
+#if SCHED_FEAT_TTWU_QUEUE
 void sched_ttwu_pending(void *arg)
 {
 	struct llist_node *llist = arg;
@@ -2793,6 +2781,7 @@ void sched_ttwu_pending(void *arg)
 
 	rq_unlock_irqrestore(rq, &rf);
 }
+#endif
 
 void send_call_function_single_ipi(int cpu)
 {
@@ -2804,6 +2793,7 @@ void send_call_function_single_ipi(int cpu)
 		trace_sched_wake_idle_without_ipi(cpu);
 }
 
+#if SCHED_FEAT_TTWU_QUEUE
 /*
  * Queue a task on the target CPUs wake_list and wake the CPU via IPI if
  * necessary. The wakee CPU on receipt of the IPI will queue the task
@@ -2819,6 +2809,7 @@ static void __ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags
 	WRITE_ONCE(rq->ttwu_pending, 1);
 	__smp_call_single_queue(cpu, &p->wake_entry.llist);
 }
+#endif
 
 void wake_up_if_idle(int cpu)
 {
@@ -2853,6 +2844,7 @@ bool cpus_share_cache(int this_cpu, int that_cpu)
 	return per_cpu(sd_llc_id, this_cpu) == per_cpu(sd_llc_id, that_cpu);
 }
 
+#if SCHED_FEAT_TTWU_QUEUE
 static inline bool ttwu_queue_cond(int cpu, int wake_flags)
 {
 	/*
@@ -2896,6 +2888,7 @@ static bool ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags)
 
 	return false;
 }
+#endif
 
 #else /* !CONFIG_SMP */
 
@@ -2911,8 +2904,10 @@ static void ttwu_queue(struct task_struct *p, int cpu, int wake_flags)
 	struct rq *rq = cpu_rq(cpu);
 	struct rq_flags rf;
 
+#if SCHED_FEAT_TTWU_QUEUE
 	if (ttwu_queue_wakelist(p, cpu, wake_flags))
 		return;
+#endif
 
 	rq_lock(rq, &rf);
 	update_rq_clock(rq);
@@ -3161,6 +3156,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 */
 	p->state = TASK_WAKING;
 
+#if SCHED_FEAT_TTWU_QUEUE
 	/*
 	 * If the owning (remote) CPU is still in the middle of schedule() with
 	 * this task as prev, considering queueing p on the remote CPUs wake_list
@@ -3183,6 +3179,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	if (smp_load_acquire(&p->on_cpu) &&
 	    ttwu_queue_wakelist(p, task_cpu(p), wake_flags | WF_ON_CPU))
 		goto unlock;
+#endif
 
 	/*
 	 * If the owning (remote) CPU is still in the middle of schedule() with
@@ -4690,7 +4687,7 @@ static void __sched notrace __schedule(bool preempt)
 
 	schedule_debug(prev, preempt);
 
-	if (sched_feat(HRTICK))
+	if (sched_feat(HRTICK) || sched_feat(HRTICK_DL))
 		hrtick_clear(rq);
 
 	local_irq_disable();
@@ -4857,7 +4854,9 @@ static inline void sched_submit_work(struct task_struct *tsk)
 
 static void sched_update_worker(struct task_struct *tsk)
 {
-	if (tsk->flags & (PF_WQ_WORKER | PF_IO_WORKER)) {
+	if (tsk->flags & (PF_WQ_WORKER | PF_IO_WORKER | PF_BLOCK_TS)) {
+		if (tsk->flags & PF_BLOCK_TS)
+			blk_plug_invalidate_ts(tsk);
 		if (tsk->flags & PF_WQ_WORKER)
 			wq_worker_running(tsk);
 		else
@@ -5368,8 +5367,10 @@ int idle_cpu(int cpu)
 		return 0;
 
 #ifdef CONFIG_SMP
+#if SCHED_FEAT_TTWU_QUEUE
 	if (rq->ttwu_pending)
 		return 0;
+#endif
 #endif
 
 	return 1;
@@ -5429,7 +5430,8 @@ static void __setscheduler_params(struct task_struct *p,
 	if (policy == SETPARAM_POLICY)
 		policy = p->policy;
 
-	p->policy = policy;
+	/* Replace SCHED_FIFO with SCHED_RR to reduce latency */
+	p->policy = policy == SCHED_FIFO ? SCHED_RR : policy;
 
 	if (dl_policy(policy))
 		__setparam_dl(p, attr);
@@ -6168,11 +6170,32 @@ out_unlock:
 	return retval;
 }
 
+static bool task_is_unity_game(struct task_struct *p)
+{
+	struct task_struct *t;
+	bool ret = false;
+
+	/* Filter for Android user applications (i.e., positive adj) */
+	if (p->signal->oom_score_adj >= 0) {
+		rcu_read_lock();
+		for_each_thread(p, t) {
+			/* Check for a UnityMain thread in the thread group */
+			if (!strcmp(t->comm, "UnityMain")) {
+				ret = true;
+				break;
+			}
+		}
+		rcu_read_unlock();
+	}
+
+	return ret;
+}
+
 long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 {
 	cpumask_var_t cpus_allowed, new_mask;
 	struct task_struct *p;
-	int retval;
+	int retval = 0;
 	int skip = 0;
 
 	rcu_read_lock();
@@ -6186,6 +6209,20 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 	/* Prevent p going away */
 	get_task_struct(p);
 	rcu_read_unlock();
+
+	/*
+	 * Unity-based games like to shoot themselves in the foot by setting a
+	 * nonsense CPU affinity, restricting the game to a narrow set of CPU
+	 * cores that it thinks are the "big" cores in a heterogeneous CPU. It
+	 * assumes that CPUs only have two performance domains (clusters), and
+	 * therefore royally mucks up games' CPU affinities on CPUs which have
+	 * more than two performance domains.
+	 *
+	 * Check if the target task is part of a Unity-based game and silently
+	 * ignore the setaffinity request so that it can't sabotage itself.
+	 */
+	if (task_is_unity_game(p))
+		goto out_put_task;
 
 	if (p->flags & PF_NO_SETAFFINITY) {
 		retval = -EINVAL;

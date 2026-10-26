@@ -36,6 +36,7 @@
 #include <uapi/linux/sched/types.h>
 
 #include <linux/binfmts.h>
+#include <linux/bitops.h>
 #include <linux/blkdev.h>
 #include <linux/compat.h>
 #include <linux/context_tracking.h>
@@ -77,6 +78,7 @@
 
 #include "cpupri.h"
 #include "cpudeadline.h"
+#include "features.h"
 
 #include <trace/events/sched.h>
 
@@ -1672,62 +1674,7 @@ static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 # define const_debug const
 #endif
 
-#define SCHED_FEAT(name, enabled)	\
-	__SCHED_FEAT_##name ,
-
-enum {
-#include "features.h"
-	__SCHED_FEAT_NR,
-};
-
-#undef SCHED_FEAT
-
-#ifdef CONFIG_SCHED_DEBUG
-
-/*
- * To support run-time toggling of sched features, all the translation units
- * (but core.c) reference the sysctl_sched_features defined in core.c.
- */
-extern const_debug unsigned int sysctl_sched_features;
-
-#ifdef CONFIG_JUMP_LABEL
-#define SCHED_FEAT(name, enabled)					\
-static __always_inline bool static_branch_##name(struct static_key *key) \
-{									\
-	return static_key_##enabled(key);				\
-}
-
-#include "features.h"
-#undef SCHED_FEAT
-
-extern struct static_key sched_feat_keys[__SCHED_FEAT_NR];
-extern const char * const sched_feat_names[__SCHED_FEAT_NR];
-
-#define sched_feat(x) (static_branch_##x(&sched_feat_keys[__SCHED_FEAT_##x]))
-
-#else /* !CONFIG_JUMP_LABEL */
-
-#define sched_feat(x) (sysctl_sched_features & (1UL << __SCHED_FEAT_##x))
-
-#endif /* CONFIG_JUMP_LABEL */
-
-#else /* !SCHED_DEBUG */
-
-/*
- * Each translation unit has its own copy of sysctl_sched_features to allow
- * constants propagation at compile time and compiler optimization based on
- * features default.
- */
-#define SCHED_FEAT(name, enabled)	\
-	(1UL << __SCHED_FEAT_##name) * enabled |
-static const_debug __maybe_unused unsigned int sysctl_sched_features =
-#include "features.h"
-	0;
-#undef SCHED_FEAT
-
-#define sched_feat(x) !!(sysctl_sched_features & (1UL << __SCHED_FEAT_##x))
-
-#endif /* SCHED_DEBUG */
+#define sched_feat(x) SCHED_FEAT_##x
 
 extern struct static_key_false sched_numa_balancing;
 extern struct static_key_false sched_schedstats;
@@ -2089,16 +2036,38 @@ extern const_debug unsigned int sysctl_sched_migration_cost;
  */
 static inline int hrtick_enabled(struct rq *rq)
 {
-	if (!sched_feat(HRTICK))
-		return 0;
 	if (!cpu_active(cpu_of(rq)))
 		return 0;
 	return hrtimer_is_hres_active(&rq->hrtick_timer);
 }
 
+static inline int hrtick_enabled_fair(struct rq *rq)
+{
+	if (!sched_feat(HRTICK))
+		return 0;
+	return hrtick_enabled(rq);
+}
+
+static inline int hrtick_enabled_dl(struct rq *rq)
+{
+	if (!sched_feat(HRTICK_DL))
+		return 0;
+	return hrtick_enabled(rq);
+}
+
 void hrtick_start(struct rq *rq, u64 delay);
 
 #else
+
+static inline int hrtick_enabled_fair(struct rq *rq)
+{
+	return 0;
+}
+
+static inline int hrtick_enabled_dl(struct rq *rq)
+{
+	return 0;
+}
 
 static inline int hrtick_enabled(struct rq *rq)
 {
