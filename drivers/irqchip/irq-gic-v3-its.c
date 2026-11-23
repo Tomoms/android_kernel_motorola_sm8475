@@ -83,6 +83,8 @@ struct its_baser {
 	u64		val;
 	u32		order;
 	u32		psz;
+	/* Inherited from a sibling ITS, not freed here */
+	bool		shared;
 };
 
 struct its_device;
@@ -2549,12 +2551,14 @@ static void its_free_tables(struct its_node *its)
 
 	for (i = 0; i < GITS_BASER_NR_REGS; i++) {
 		if (its->tables[i].base) {
-			unsigned long base = (unsigned long)its->tables[i].base;
-			u32 order = its->tables[i].order;
-			u32 npages = PAGE_ORDER_TO_SIZE(order) >> PAGE_SHIFT;
+			if (!its->tables[i].shared) {
+				unsigned long base = (unsigned long)its->tables[i].base;
+				u32 order = its->tables[i].order;
+				u32 npages = PAGE_ORDER_TO_SIZE(order) >> PAGE_SHIFT;
 
-			set_memory_encrypted(base, npages);
-			free_pages(base, order);
+				set_memory_encrypted(base, npages);
+				free_pages(base, order);
+			}
 			its->tables[i].base = NULL;
 		}
 	}
@@ -2648,6 +2652,7 @@ static int its_alloc_tables(struct its_node *its)
 				WARN_ON(i != 2);
 				if ((sibling = find_sibling_its(its))) {
 					*baser = sibling->tables[2];
+					baser->shared = true;
 					its_write_baser(its, baser, baser->val);
 					continue;
 				}
