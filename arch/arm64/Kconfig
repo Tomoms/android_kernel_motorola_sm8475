@@ -39,32 +39,34 @@ config ARM64
 	select ARCH_HAS_TICK_BROADCAST if GENERIC_CLOCKEVENTS_BROADCAST
 	select ARCH_HAVE_ELF_PROT
 	select ARCH_HAVE_NMI_SAFE_CMPXCHG
-	select ARCH_INLINE_READ_LOCK if !PREEMPTION
-	select ARCH_INLINE_READ_LOCK_BH if !PREEMPTION
-	select ARCH_INLINE_READ_LOCK_IRQ if !PREEMPTION
-	select ARCH_INLINE_READ_LOCK_IRQSAVE if !PREEMPTION
-	select ARCH_INLINE_READ_UNLOCK if !PREEMPTION
-	select ARCH_INLINE_READ_UNLOCK_BH if !PREEMPTION
-	select ARCH_INLINE_READ_UNLOCK_IRQ if !PREEMPTION
-	select ARCH_INLINE_READ_UNLOCK_IRQRESTORE if !PREEMPTION
-	select ARCH_INLINE_WRITE_LOCK if !PREEMPTION
-	select ARCH_INLINE_WRITE_LOCK_BH if !PREEMPTION
-	select ARCH_INLINE_WRITE_LOCK_IRQ if !PREEMPTION
-	select ARCH_INLINE_WRITE_LOCK_IRQSAVE if !PREEMPTION
-	select ARCH_INLINE_WRITE_UNLOCK if !PREEMPTION
-	select ARCH_INLINE_WRITE_UNLOCK_BH if !PREEMPTION
-	select ARCH_INLINE_WRITE_UNLOCK_IRQ if !PREEMPTION
-	select ARCH_INLINE_WRITE_UNLOCK_IRQRESTORE if !PREEMPTION
-	select ARCH_INLINE_SPIN_TRYLOCK if !PREEMPTION
-	select ARCH_INLINE_SPIN_TRYLOCK_BH if !PREEMPTION
-	select ARCH_INLINE_SPIN_LOCK if !PREEMPTION
-	select ARCH_INLINE_SPIN_LOCK_BH if !PREEMPTION
-	select ARCH_INLINE_SPIN_LOCK_IRQ if !PREEMPTION
-	select ARCH_INLINE_SPIN_LOCK_IRQSAVE if !PREEMPTION
-	select ARCH_INLINE_SPIN_UNLOCK if !PREEMPTION
-	select ARCH_INLINE_SPIN_UNLOCK_BH if !PREEMPTION
-	select ARCH_INLINE_SPIN_UNLOCK_IRQ if !PREEMPTION
-	select ARCH_INLINE_SPIN_UNLOCK_IRQRESTORE if !PREEMPTION
+	select ARCH_INLINE_READ_TRYLOCK
+	select ARCH_INLINE_READ_LOCK
+	select ARCH_INLINE_READ_LOCK_BH
+	select ARCH_INLINE_READ_LOCK_IRQ
+	select ARCH_INLINE_READ_LOCK_IRQSAVE
+	select ARCH_INLINE_READ_UNLOCK
+	select ARCH_INLINE_READ_UNLOCK_BH
+	select ARCH_INLINE_READ_UNLOCK_IRQ
+	select ARCH_INLINE_READ_UNLOCK_IRQRESTORE
+	select ARCH_INLINE_WRITE_TRYLOCK
+	select ARCH_INLINE_WRITE_LOCK
+	select ARCH_INLINE_WRITE_LOCK_BH
+	select ARCH_INLINE_WRITE_LOCK_IRQ
+	select ARCH_INLINE_WRITE_LOCK_IRQSAVE
+	select ARCH_INLINE_WRITE_UNLOCK
+	select ARCH_INLINE_WRITE_UNLOCK_BH
+	select ARCH_INLINE_WRITE_UNLOCK_IRQ
+	select ARCH_INLINE_WRITE_UNLOCK_IRQRESTORE
+	select ARCH_INLINE_SPIN_TRYLOCK
+	select ARCH_INLINE_SPIN_TRYLOCK_BH
+	select ARCH_INLINE_SPIN_LOCK
+	select ARCH_INLINE_SPIN_LOCK_BH
+	select ARCH_INLINE_SPIN_LOCK_IRQ
+	select ARCH_INLINE_SPIN_LOCK_IRQSAVE
+	select ARCH_INLINE_SPIN_UNLOCK
+	select ARCH_INLINE_SPIN_UNLOCK_BH
+	select ARCH_INLINE_SPIN_UNLOCK_IRQ
+	select ARCH_INLINE_SPIN_UNLOCK_IRQRESTORE
 	select ARCH_KEEP_MEMBLOCK
 	select ARCH_USE_CMPXCHG_LOCKREF
 	select ARCH_USE_GNU_PROPERTY
@@ -109,6 +111,7 @@ config ARM64
 	select GENERIC_CPU_AUTOPROBE
 	select GENERIC_CPU_VULNERABILITIES
 	select GENERIC_EARLY_IOREMAP
+	select GENERIC_FIND_FIRST_BIT
 	select GENERIC_IDLE_POLL_SETUP
 	select GENERIC_IRQ_IPI
 	select ARCH_WANTS_IRQ_RAW
@@ -752,9 +755,17 @@ config ARM64_ERRATUM_2454944
 	  This is quite involved and has unavoidable performance impact on
 	  affected systems.
 
+config ARM64_WORKAROUND_BROKEN_AMU_CONSTCNT
+	bool
+	# Targeting errata affecting AMEVCNTR01, the AMU constant counter.
+	# On affected CPUs the counter may not increment at the expected rate,
+	# making it unreliable. As a result, AMU users should treat it as
+	# unavailable rather than relying on misleading counter values.
+
 config ARM64_ERRATUM_2457168
 	bool "Cortex-A510: 2457168: workaround for AMEVCNTR01 incrementing incorrectly"
 	depends on ARM64_AMU_EXTN
+	select ARM64_WORKAROUND_BROKEN_AMU_CONSTCNT
 	default y
 	help
 	  This option adds the workaround for ARM Cortex-A510 erratum 2457168.
@@ -767,6 +778,28 @@ config ARM64_ERRATUM_2457168
 	  to 0 thus signaling an error case. This effect is the same to firmware disabling
 	  affected counters, in which case 0 will be returned when reading the disabled
 	  counters.
+
+	  If unsure, say Y.
+
+config ARM64_ERRATUM_3821522
+	bool "Cortex-A725: 3821522: workaround for possible CNT_CYCLES increment error due to WFE/WFI"
+	depends on ARM64_AMU_EXTN
+	select ARM64_WORKAROUND_BROKEN_AMU_CONSTCNT
+	default y
+	help
+	  This option adds the workaround for ARM Cortex-A725 erratum 3821522.
+
+	  On affected A725 cores, the CNT_CYCLES event may incur a significant
+	  increment error when entering and subsequently exiting WFx.
+	  As a result, the CNT_CYCLES may diverge from the system counter
+	  frequency at which it is expected to increment.
+	  This renders the AMU counter AMEVCNTR01, that implements CNT_CYCLES,
+	  being unreliable and unsuitable for use.
+
+	  Since there is no hardware workaround, reads of the affected CNT_CYCLES
+	  counter return 0 in the relevant paths. This causes users of the counter
+	  to treat it as unavailable and is functionally equivalent to firmware
+	  disabling the affected counter.
 
 	  If unsure, say Y.
 

@@ -1,13 +1,4 @@
 # SPDX-License-Identifier: GPL-2.0-only
-config DEFCONFIG_LIST
-	string
-	depends on !UML
-	option defconfig_list
-	default "/lib/modules/$(shell,uname -r)/.config"
-	default "/etc/kernel-config"
-	default "/boot/config-$(shell,uname -r)"
-	default "arch/$(SRCARCH)/configs/$(KBUILD_DEFCONFIG)"
-
 config CC_VERSION_TEXT
 	string
 	default "$(CC_VERSION_TEXT)"
@@ -754,8 +745,8 @@ config LOG_CPU_MAX_BUF_SHIFT
 	int "CPU kernel log buffer size contribution (13 => 8 KB, 17 => 128KB)"
 	depends on SMP
 	range 0 21
-	default 12 if !BASE_SMALL
-	default 0 if BASE_SMALL
+	default 0 if BASE_SMALL != 0
+	default 12
 	depends on PRINTK
 	help
 	  This option allows to increase the default ring buffer size
@@ -871,6 +862,42 @@ config UCLAMP_BUCKETS_COUNT
 	  If in doubt, use the default value.
 
 endmenu
+
+menu "FAIR Scheuler tunables"
+
+choice
+	prompt "Utilization's PELT half-Life"
+	default PELT_UTIL_HALFLIFE_DEFAULT
+	help
+	  Allows choosing one of the possible values for the PELT half-life to
+	  be used for the update of the utilization of tasks and CPUs.
+	  The half-life is the amount of [ms] required by the PELT signal to
+	  build up to 50% utilization. The higher the half-life the longer it
+	  takes for a task to be represented as a big one.
+
+	  Note that adjusting PELT half-life via kernel parameters is only
+	  allowed when PELT_UTIL_HALFLIFE_DEFAULT is selected.
+
+	  If not sure, use the default.
+
+config PELT_UTIL_HALFLIFE_DEFAULT
+	bool "Default (32 ms)"
+
+config PELT_UTIL_HALFLIFE_32
+	bool "32 ms"
+
+config PELT_UTIL_HALFLIFE_16
+	bool "16 ms"
+
+config PELT_UTIL_HALFLIFE_12
+	bool "12 ms"
+
+config PELT_UTIL_HALFLIFE_8
+	bool "8 ms"
+
+endchoice
+
+endmenu # FAIR Scheduler tunables"
 
 #
 # For architectures that want to enable the support for NUMA-affine scheduler
@@ -1369,7 +1396,6 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
 
 config CC_OPTIMIZE_FOR_PERFORMANCE_O3
 	bool "Optimize more for performance (-O3)"
-	depends on ARC
 	help
 	  Choosing this option will pass "-O3" to your compiler to optimize
 	  the kernel yet more for performance.
@@ -2040,6 +2066,23 @@ config SLAB_FREELIST_HARDENED
 	  freelist exploit methods. Some slab implementations have more
 	  sanity-checking than others. This option is most effective with
 	  CONFIG_SLUB.
+
+config SLAB_CANARY
+	depends on SLUB
+	depends on !SLAB_MERGE_DEFAULT
+	bool "SLAB canaries"
+	default y
+	help
+	  Place canaries at the end of kernel slab allocations, sacrificing
+	  some performance and memory usage for security.
+
+	  Canaries can detect some forms of heap corruption when allocations
+	  are freed and as part of the HARDENED_USERCOPY feature. It provides
+	  basic use-after-free detection for HARDENED_USERCOPY.
+
+	  Canaries absorb small overflows (rendering them harmless), mitigate
+	  non-NUL terminated C string overflows on 64-bit via a guaranteed zero
+	  byte and provide basic double-free detection.
 
 config SHUFFLE_PAGE_ALLOCATOR
 	bool "Page allocator randomization"

@@ -278,7 +278,9 @@ batadv_iv_ogm_emit_send_time(const struct batadv_priv *bat_priv)
 	msecs = atomic_read(&bat_priv->orig_interval) - BATADV_JITTER;
 	msecs += prandom_u32_max(2 * BATADV_JITTER);
 
-	return jiffies + msecs_to_jiffies(msecs);
+	return jiffies + msecs_to_jiffies(
+		   atomic_read(&bat_priv->orig_interval) -
+		   JITTER + (random32() % (2*JITTER)));
 }
 
 /* when do we schedule a ogm packet to be sent */
@@ -451,6 +453,7 @@ batadv_iv_ogm_can_aggregate(const struct batadv_ogm_packet *new_bat_ogm_packet,
 	struct batadv_ogm_packet *batadv_ogm_packet;
 	int aggregated_bytes = forw_packet->packet_len + packet_len;
 	struct batadv_hard_iface *primary_if = NULL;
+	u8 packet_num = forw_packet->num_packets + 1;
 	bool res = false;
 	unsigned long aggregation_end_time;
 
@@ -474,6 +477,9 @@ batadv_iv_ogm_can_aggregate(const struct batadv_ogm_packet *new_bat_ogm_packet,
 		return false;
 
 	if (aggregated_bytes > BATADV_MAX_AGGREGATION_BYTES)
+		return false;
+
+	if (packet_num >= BITS_PER_TYPE(forw_packet->direct_link_flags))
 		return false;
 
 	/* packet is not leaving on the same interface. */
@@ -1802,6 +1808,11 @@ static void batadv_iv_send_outstanding_bat_ogm_packet(struct work_struct *work)
 		dropped = true;
 		goto out;
 	}
+
+	/* Mark aggregate as full before forcing emit. */
+	spin_lock_bh(&bat_priv->forw_bat_list_lock);
+	forw_packet->num_packets = BITS_PER_TYPE(forw_packet->direct_link_flags);
+	spin_unlock_bh(&bat_priv->forw_bat_list_lock);
 
 	batadv_iv_ogm_emit(forw_packet);
 

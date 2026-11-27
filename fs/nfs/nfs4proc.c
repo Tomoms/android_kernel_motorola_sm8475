@@ -136,7 +136,8 @@ nfs4_label_init_security(struct inode *dir, struct dentry *dentry,
 	label->label = NULL;
 
 	err = security_dentry_init_security(dentry, sattr->ia_mode,
-				&dentry->d_name, (void **)&label->label, &label->len);
+				&dentry->d_name, NULL,
+				(void **)&label->label, &label->len);
 	if (err == 0)
 		return label;
 
@@ -4645,12 +4646,14 @@ static int nfs4_proc_remove(struct inode *dir, struct dentry *dentry)
 	};
 	struct inode *inode = d_inode(dentry);
 	int err;
+	unsigned long gencount;
 
 	if (inode) {
 		if (inode->i_nlink == 1)
 			nfs4_inode_return_delegation(inode);
 		else
 			nfs4_inode_make_writeable(inode);
+		gencount = READ_ONCE(NFS_I(inode)->attr_gencount);
 	}
 	do {
 		err = _nfs4_proc_remove(dir, &dentry->d_name, NF4REG);
@@ -4658,6 +4661,9 @@ static int nfs4_proc_remove(struct inode *dir, struct dentry *dentry)
 		err = nfs4_handle_exception(NFS_SERVER(dir), err,
 				&exception);
 	} while (exception.retry);
+
+	if (err == 0 && inode)
+		nfs_drop_nlink(inode, gencount);
 	return err;
 }
 
@@ -9453,6 +9459,14 @@ nfs4_layoutget_handle_exception(struct rpc_task *task,
 	 */
 	case -NFS4ERR_BADLAYOUT:
 		status = -EOVERFLOW;
+		goto out;
+	/*
+	 * NFS4ERR_TOOSMALL means the layout for the requested range
+	 * exceeds what the client advertised in loga_maxcount (see
+	 * RFC8881 section 18.43.3).
+	 */
+	case -ETOOSMALL:
+		status = -EMSGSIZE;
 		goto out;
 	/*
 	 * NFS4ERR_LAYOUTTRYLATER is a conflict with another client

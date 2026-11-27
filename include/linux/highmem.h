@@ -218,7 +218,7 @@ static inline void __kunmap_atomic(void *addr)
 	 * handles re-enabling faults and preemption
 	 */
 #ifdef ARCH_HAS_FLUSH_ON_KUNMAP
-	kunmap_flush_on_unmap(addr);
+	kunmap_flush_on_unmap(PTR_ALIGN_DOWN(addr, PAGE_SIZE));
 #endif
 }
 
@@ -322,6 +322,13 @@ static inline void tag_clear_highpage(struct page *page)
 }
 
 #endif
+
+static inline void verify_zero_highpage(struct page *page)
+{
+	void *kaddr = kmap_atomic(page);
+	BUG_ON(memchr_inv(kaddr, 0, PAGE_SIZE));
+	kunmap_atomic(kaddr);
+}
 
 static inline void zero_user_segments(struct page *page,
 	unsigned start1, unsigned end1,

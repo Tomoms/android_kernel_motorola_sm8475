@@ -11,6 +11,7 @@
 
 #include <linux/export.h>
 #include <linux/kernel.h>
+#include <linux/overflow.h>
 #include <linux/string.h>
 #include <linux/ctype.h>
 
@@ -26,7 +27,9 @@ static int get_range(char **str, int *pint, int n)
 
 	(*str)++;
 	upper_range = simple_strtol((*str), NULL, 0);
-	inc_counter = upper_range - *pint;
+	/* Keep the sign of the result when the difference doesn't fit */
+	if (check_sub_overflow(upper_range, *pint, &inc_counter))
+		inc_counter = upper_range < *pint ? -1 : INT_MAX;
 	for (x = *pint; n && x < upper_range; x++, n--)
 		*pint++ = x;
 	return inc_counter;
@@ -97,6 +100,14 @@ char *get_options(const char *str, int nints, int *ints)
 			range_nums = get_range((char **)&str, ints + i, nints - i);
 			if (range_nums < 0)
 				break;
+			/* The range didn't fit, so the array is full */
+			if (range_nums > nints - i) {
+				i = nints;
+				break;
+			}
+			/* Leave room for the upper number of the range */
+			if (range_nums >= INT_MAX - i)
+				break;
 			/*
 			 * Decrement the result by one to leave out the
 			 * last number in the range.  The next iteration
@@ -132,27 +143,28 @@ unsigned long long memparse(const char *ptr, char **retptr)
 	case 'E':
 	case 'e':
 		ret <<= 10;
-		/* fall through */
+		fallthrough;
 	case 'P':
 	case 'p':
 		ret <<= 10;
-		/* fall through */
+		fallthrough;
 	case 'T':
 	case 't':
 		ret <<= 10;
-		/* fall through */
+		fallthrough;
 	case 'G':
 	case 'g':
 		ret <<= 10;
-		/* fall through */
+		fallthrough;
 	case 'M':
 	case 'm':
 		ret <<= 10;
-		/* fall through */
+		fallthrough;
 	case 'K':
 	case 'k':
 		ret <<= 10;
 		endptr++;
+		fallthrough;
 	default:
 		break;
 	}
